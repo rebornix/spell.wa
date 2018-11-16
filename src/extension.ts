@@ -1,6 +1,5 @@
 'use strict';
 import * as vscode from 'vscode';
-import { start } from 'repl';
 const hunspellASM = require('hunspell-asm');
 const path = require('path');
 const unixify = require('unixify');
@@ -57,7 +56,7 @@ export async function activate(context: vscode.ExtensionContext) {
 		let tokenizer = await monarch.getLanguageSupport('typescript');
 		let state = tokenizer.getInitialState();
 		let isInSideComment = false;
-		let wordSeparator = new RegExp(/[.=+{}\s*()\[,@#&!/<>:-]+/, 'g');
+		let wordSeparator = new RegExp(/[.=+{}\s*()\[,@#&!/<>:\-\'\"]+/, 'g');
 		for (let i = 0; i < document.lineCount; i++) {
 			let line = document.lineAt(i);
 			let ret = tokenizer.tokenize(line.text, state, 0);
