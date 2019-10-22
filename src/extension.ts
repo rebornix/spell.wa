@@ -1,130 +1,143 @@
 'use strict';
 import * as vscode from 'vscode';
+import { readFile } from './util';
+import { Observable } from 'rxjs';
+import { debounceTime } from 'rxjs/operators';
+import * as path from 'path';
+
 const hunspellASM = require('hunspell-asm');
-const path = require('path');
-const unixify = require('unixify');
-const monarch = require('node-monarch');
+const Parser = require('web-tree-sitter');
 
-const runHunspell = (hunspellFactory, affPath, dicPath) => {
-	const hunspell = hunspellFactory.create(affPath, dicPath);
-
-	hunspell.addWord('github');
-	let misSpell = hunspell.spell('github');
-	vscode.window.showInformationMessage(`check spell for word 'github': ${misSpell}`);
-
-	misSpell = hunspell.spell('Hello');
-	vscode.window.showInformationMessage(`check spell for word 'Hello': ${misSpell}`);
-
-	const suggestion = hunspell.suggest('github');
-	vscode.window.showInformationMessage(`spell suggestion for misspelled word 'GitHub': ${suggestion}`);
-
-	hunspell.dispose();
-};
 
 async function init(context) {
 	const hunspellFactory = await hunspellASM.loadModule();
-	const mountedPath = hunspellFactory.mountDirectory(path.resolve('C:\\Users\\penlv\\Documents\\Dictionary'));
-	const dictFile = unixify(path.join(mountedPath, 'English.dic'));
-	const affFile = unixify(path.join(mountedPath, 'English.aff'));
+	const affBuffer = await readFile(path.resolve(__dirname, '../en.aff'));
+	const dicBuffer = await readFile(path.resolve(__dirname, '../en.dic'));
+	const affFile = hunspellFactory.mountBuffer(affBuffer, 'en.aff');
+	const dictFile = hunspellFactory.mountBuffer(dicBuffer, 'en.dic');
+
 	const hunspell = hunspellFactory.create(affFile, dictFile);
 
 	context.subscriptions.push(() => {
-		hunspellFactory.unmount(mountedPath);
+		hunspellFactory.unmount('en.aff');
+		hunspellFactory.unmount('en.dic');
 	});
 
 	return hunspell;
 }
 
 export async function activate(context: vscode.ExtensionContext) {
-    console.log('Congratulations, your extension "spell-wa" is now active!');
-
 	let hunspell = await init(context);
 	context.subscriptions.push(hunspell);
+	const parser = new Parser();
+	const Lang = await Parser.Language.load(path.resolve(__dirname, '../tree-sitter-javascript.wasm'));
+	parser.setLanguage(Lang);
 	const collection = vscode.languages.createDiagnosticCollection('spell');
-	context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(async e => {
-		let editor = e;
-		if (!editor) {
-			return;
-		}
 
+	var spellDocument = function(document) {
 		const misSpells: vscode.Diagnostic[] = [];
 
-		var start: any = new Date()
-		let document = editor.document;
-		let tokenizer;
-		try {
-			tokenizer = await monarch.getLanguageSupport(document.languageId);
-		} catch (e) {}
-		if(!tokenizer) {
-			return;
-		}
-		let state = tokenizer.getInitialState();
-		let isInSideComment = false;
+		const tree = parser.parse(document.getText());
 		let wordSeparator = new RegExp(/[.=+{}\s*()\[\]_`\\|,@#&!/<>:\-\'\"]+/, 'g');
-		for (let i = 0; i < document.lineCount; i++) {
-			let line = document.lineAt(i);
-			let ret = tokenizer.tokenize(line.text, state, 0);
-			let startIndex;
-			if (isInSideComment) {
-				startIndex = 0;
-			} else {
-				startIndex = -1;
-			}
-			let endIndex = -1;
-			for (let j = 0; j < ret.tokens.length; j++) {
-				let token = ret.tokens[j];
-				if (isInSideComment && token.type.indexOf('comment') < 0) {
-					// we are out of a comment
-					isInSideComment = false;
-					endIndex = token.offset;
-				}
 
-				if (!isInSideComment && token.type.indexOf('comment') >= 0) {
-					isInSideComment = true;
-					startIndex = token.offset;
-				}
-			}
+		var spellCommentNode = function (node) {
+			let text = node.text;
+			let lines = text.split(/\r\n|\r|\n/g);
 
-			if (isInSideComment) {
-				endIndex = line.text.length;
-			}
+			for (let i = 0; i < lines.length; i++) {
+				let lineText = lines[i];
+				let line = node.startPosition.row + i;
+				let columnOffset = i === 0 ? node.startPosition.column : 0;
+				let endColumn = i === lines.length - 1 ? node.endPosition.column : lineText.length;
 
-			if (startIndex >= 0 && endIndex >= startIndex) {
-				// content
-				let text = line.text.substring(startIndex, endIndex);
-				// console.log(text);
 				let m: RegExpExecArray | null;
 				let lastCharacter = 0;
+
 				do {
-					m = wordSeparator.exec(text);
+					m = wordSeparator.exec(lineText);
 					if (!m) {
 						break;
 					}
 					const matchStartIndex = m.index;
 					const matchLength = m[0].length;
 
-					let word = text.substring(lastCharacter, matchStartIndex);
+					let word = lineText.substring(lastCharacter, matchStartIndex);
 					if (word) {
 						let misSpell = hunspell.spell(word);
 						if (!misSpell) {
 							misSpells.push({
 								message: `${word} is misspelled`,
-								range: new vscode.Range(i, startIndex + lastCharacter, i, startIndex + matchStartIndex),
+								range: new vscode.Range(line, columnOffset + lastCharacter, line, columnOffset + matchStartIndex),
 								severity: vscode.DiagnosticSeverity.Warning
 							})
 							// console.log(word);
 						}
 					}
 					lastCharacter = matchStartIndex + matchLength;
-				} while(m);
+				} while (m)
+
+				if (lastCharacter + columnOffset < endColumn) {
+					let word = lineText.substring(lastCharacter, endColumn - columnOffset);
+
+					if (word) {
+						let misSpell = hunspell.spell(word);
+						if (!misSpell) {
+							misSpells.push({
+								message: `${word} is misspelled`,
+								range: new vscode.Range(line, columnOffset + lastCharacter, line, columnOffset + endColumn),
+								severity: vscode.DiagnosticSeverity.Warning
+							})
+						}
+					}
+				}
 			}
-			state = ret.endState;
 		}
 
-		var end = <any>(new Date()) - start
-		console.info('Execution time: %dms', end)
+		var traverse = function (node) {
+			if (!node) {
+				return;
+			}
+
+			if (node.type === 'comment' || node.type === 'string') {
+				spellCommentNode(node);
+				return;
+			}
+
+			if (node.children) {
+				for (let i = 0; i < node.children.length; i++) {
+					traverse(node.children[i]);
+				}
+			}
+		}
+
+		traverse(tree.rootNode);
+
 		collection.set(document.uri, misSpells);
+	}
+
+	context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(async e => {
+		let editor = e;
+		if (!editor) {
+			return;
+		}
+
+		spellDocument(editor.document);
 	}));
+
+	let textDocumentChangeObservable = Observable.create(function (observer) {
+		vscode.workspace.onDidChangeTextDocument(e => {
+			observer.next(e);
+		})
+	}).pipe(debounceTime(1000));
+
+	textDocumentChangeObservable.subscribe(function (e) {
+		collection.set(e.document.uri, []);
+		spellDocument(e.document);
+	});
+
+	if (vscode.window.activeTextEditor) {
+		spellDocument(vscode.window.activeTextEditor.document);
+	}
 }
 
 // this method is called when your extension is deactivated

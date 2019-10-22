@@ -10,6 +10,7 @@
     "categories": [
         "Other"
     ],
+    "icon": "spell.wa.png",
     "activationEvents": [
         "*"
     ],
@@ -30,13 +31,15 @@
         "test": "npm run compile && node ./node_modules/vscode/bin/test"
     },
     "dependencies": {
-        "hunspell-asm": "2.0.0-beta.2",
-        "node-monarch": "github:rebornix/node-monarch#master",
-        "unixify": "^1.0.0"
+        "hunspell-asm": "4.0.1",
+        "web-tree-sitter": "0.15.9",
+        "rxjs": "*"
     },
     "devDependencies": {
         "@types/mocha": "^2.2.48",
         "@types/node": "^8.10.25",
+        "tree-sitter-cli": "^0.15.12",
+        "tree-sitter-javascript": "^0.15.1",
         "typescript": "^2.6.1",
         "vscode": "^1.1.21"
     }
