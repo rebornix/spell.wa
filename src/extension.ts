@@ -34,7 +34,10 @@ export async function activate(context: vscode.ExtensionContext) {
 	parser.setLanguage(Lang);
 	const collection = vscode.languages.createDiagnosticCollection('spell');
 
-	var spellDocument = function(document) {
+	var spellDocument = function(document: vscode.TextDocument) {
+		if (document.languageId !== 'javascript' && document.languageId !== 'typescript') {
+			return;
+		}
 		const misSpells: vscode.Diagnostic[] = [];
 
 		const tree = parser.parse(document.getText());
