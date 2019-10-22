@@ -14,6 +14,7 @@
     "activationEvents": [
         "*"
     ],
+    "preview": true,
     "main": "./out/extension",
     "contributes": {
         "commands": [
